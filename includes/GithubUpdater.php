@@ -1,0 +1,429 @@
+<?php
+/**
+ * Github updater
+ *
+ * @example Github release body:
+ * 	Tested: 6.3
+ *	Icons: 1x|https://domainname.com/icon-256x256.png?rev=2818463,2x|https://domainname.com/icon-256x256.png?rev=2818463
+ *  Banners: 1x|https://domainname.com/banner-720x250.png
+ *	RequiresPHP: 7.0
+ *
+ *	|||
+ *	Add your changes here
+ *
+ */
+class ACF_POE_GithubUpdater {
+
+	private $file;
+	private $plugin;
+	private $basename;
+	private $active;
+	private $username;
+	private $repository;
+	private $github_response;
+
+	private $plugin_settings;
+	private $user_agent;
+
+	/**
+	 * __constructor for the class
+	 * @param [type] $file [description]
+	 */
+	public function __construct( $file ) {
+		$this->file = $file;
+		add_action( 'admin_init', array( $this, 'set_plugin_properties' ) );
+		return $this;
+	}
+
+	/**
+	 * [set_plugin_properties description]
+	 */
+	public function set_plugin_properties() {
+		$this->plugin	= get_plugin_data( $this->file );
+		$this->basename = plugin_basename( $this->file );
+		$this->active	= is_plugin_active( $this->basename );
+
+		$plugin_name = isset( $this->plugin['Name'] ) ? (string) $this->plugin['Name'] : 'WordPress Plugin';
+		$plugin_version = isset( $this->plugin['Version'] ) ? (string) $this->plugin['Version'] : '';
+		$ua = trim( $plugin_name . ( $plugin_version !== '' ? '/' . $plugin_version : '' ) );
+		if ( $ua === '' ) {
+			$ua = 'WordPress Plugin';
+		}
+		$this->user_agent = $ua;
+	}
+
+	private function get_user_agent() {
+		if ( is_string( $this->user_agent ) && $this->user_agent !== '' ) {
+			return $this->user_agent;
+		}
+		if ( is_string( $this->basename ) && $this->basename !== '' ) {
+			return $this->basename;
+		}
+		return 'WordPress Plugin';
+	}
+
+	/**
+	 * [set_username description]
+	 * @param [type] $username [description]
+	 */
+	public function set_username( $username ) {
+		$this->username = $username;
+	}
+
+	/**
+	 * [set_settings description]
+	 * @param [type] $settings [description]
+	 */
+	public function set_settings( $settings ) {
+
+		// set some defaults in case someone forgets to set these
+		$defaults = array(
+			'requires'			=> '5.4',
+			'tested'			=> '6.3',
+			'rating'			=> '100.0',
+			'num_ratings'			=> '10',
+			'downloaded'			=> '10',
+			'added'				=> '2023-08-20',
+			'banners'			=> false,
+			'icons'				=> false,
+		);
+
+		$settings = wp_parse_args( $settings , $defaults );
+
+		$this->plugin_settings = $settings;
+	}
+
+	/**
+	 * [set_repository description]
+	 * @param [type] $repository [description]
+	 */
+	public function set_repository( $repository ) {
+		$this->repository = $repository;
+	}
+
+	/**
+	 * [get_repository_info description]
+	 * @return array Repository information or empty array on failure
+	 */
+	private function get_repository_info() {
+		// Do we have a response already cached?
+		if ( is_null( $this->github_response ) ) {
+			// Build URI
+			$request_uri = sprintf( 'https://api.github.com/repos/%s/%s/releases', $this->username, $this->repository );
+
+			// Make the request to GitHub API with proper headers.
+            $args = array(
+                'headers' => array(
+					'User-Agent' => $this->get_user_agent(),
+                ),
+                'timeout' => 15,
+            );
+            $request = wp_remote_get( $request_uri, $args );
+
+			// Check if request was successful
+			if ( is_wp_error( $request ) ) {
+				// Handle error case
+				$this->github_response = array();
+				return $this->github_response;
+			}
+
+			// Get response code
+			$response_code = wp_remote_retrieve_response_code( $request );
+			if ( $response_code !== 200 ) {
+				// API returned an error status code
+				$this->github_response = array();
+				return $this->github_response;
+			}
+
+			// Get JSON and parse it
+			$response = json_decode( wp_remote_retrieve_body( $request ), true );
+
+			// Validate response is an array
+			if ( !is_array( $response ) || empty( $response ) ) {
+				$this->github_response = array();
+				return $this->github_response;
+			}
+
+			// Get the first item
+			$response = current( $response );
+
+			// Verify we have a proper release structure
+			if ( !is_array( $response ) ) {
+				$this->github_response = array();
+				return $this->github_response;
+			}
+
+			// Check if body exists before trying to get metadata
+			if ( isset( $response['body'] ) && is_string( $response['body'] ) ) {
+				// Try to get metadata from the release body
+				$metadata = $this->get_tmpfile_data( $response['body'] );
+				
+				// Ensure metadata is an array
+				if ( is_array( $metadata ) ) {
+					// Merge the data with the response
+					$response = array_merge( $response, $metadata );
+				}
+			} else {
+				// If body doesn't exist, set empty defaults
+				$response['tested'] = '';
+				$response['requires_php'] = '';
+				$response['icons'] = array();
+				$response['banners'] = array();
+				$response['updates'] = '';
+			}
+
+			// Set it to our property
+			$this->github_response = $response;
+			return $response;
+		}
+
+		// Return cached response
+		return $this->github_response;
+	}
+
+	/**
+	 * [initialize description]
+	 * @return [type] [description]
+	 */
+	public function initialize() {
+		add_filter( 'pre_set_site_transient_update_plugins', array( $this, 'modify_transient' ), 10, 1 );
+		add_filter( 'plugins_api', array( $this, 'plugin_popup' ), 10, 3);
+		add_filter( 'upgrader_post_install', array( $this, 'after_install' ), 10, 3 );
+	}
+
+	/**
+	 * [modify_transient description]
+	 * @param  [type] $transient [description]
+	 * @return [type]            [description]
+	 */
+	public function modify_transient( $transient ) {
+
+		// Check if transient has a checked property
+		if ( property_exists( $transient, 'checked') ) {
+
+		 	// Did Wordpress check for updates?
+			if ( $checked = $transient->checked ) {
+
+				// return early if our plugin hasn't been checked
+				if( !isset( $checked[ $this->basename ] ) ) return $transient;
+
+				// Get the repo info
+				$this->get_repository_info();
+
+				// Ensure we have a valid tag before comparing versions
+                $tag_name = is_array($this->github_response) && isset($this->github_response['tag_name']) ? $this->github_response['tag_name'] : '';
+                if (empty($tag_name)) {
+                    return $transient; // Nothing to compare against
+                }
+
+				// Normalize tag by stripping a leading 'v' to support tags like 'v1.2.3'
+                $remote_version = ltrim( (string) $tag_name, "vV" );
+                $current_version = $checked[ $this->basename ];
+                // Check if we're out of date
+                $out_of_date = version_compare( $remote_version, $current_version, 'gt' );
+				if( $out_of_date ) {
+
+					// Get the ZIP
+					$new_files = is_array($this->github_response) && isset($this->github_response['zipball_url']) ? $this->github_response['zipball_url'] : '';
+					if (empty($new_files)) {
+						return $transient; // Without a package URL, we cannot provide an update
+					}
+					
+					// Create valid slug
+					$slug = current( explode('/', $this->basename ) );
+
+					// setup our plugin info
+					$plugin = array(
+						'url' => $this->plugin["PluginURI"],
+						'slug' => $slug,
+						'package' => $new_files,
+						// Prefer explicit settings when provided; fall back to release body metadata
+						'tested' => ! empty($this->plugin_settings['tested']) ? $this->plugin_settings['tested'] : ( $this->github_response['tested'] ?? '' ),
+						'requires_php' => ! empty($this->plugin_settings['requires_php']) ? $this->plugin_settings['requires_php'] : ( $this->github_response['requires_php'] ?? '' ),
+						'icons' => ! empty($this->plugin_settings['icons']) ? $this->plugin_settings['icons'] : ( $this->github_response['icons'] ?? array() ),
+						'banners' => ! empty($this->plugin_settings['banners']) ? $this->plugin_settings['banners'] : ( $this->github_response['banners'] ?? array() ),
+						'banners_rtl' => [],
+						'new_version' => $remote_version,
+					);
+
+					// Return it in response
+					$transient->response[$this->basename] = (object) $plugin;
+				}
+			}
+		}
+		
+		// Return filtered transient
+		return $transient;
+	}
+
+	/**
+	 * get_tmpfile_data
+	 * 
+	 * takes a string, creates a temp file and tries to get meta data from the tmp file
+	 * since I couldn't find a function that does what I wanted
+	 *
+	 * @param  mixed $string
+	 * @return void
+	 */
+	private function get_tmpfile_data( $string ) {
+
+
+		// create a wp temp file in the 
+		$temp_file = wp_tempnam();
+		$temp = fopen($temp_file, 'r+');
+		
+		// make sure to also delete the file when done or even when scripts fail
+		register_shutdown_function( function() use( $temp_file ) {
+			@unlink( $temp_file );
+		} );		
+
+		$tmpfilename = stream_get_meta_data($temp)['uri'];
+		fwrite( $temp, $string);
+
+        $file_headers = \get_file_data( 
+            $tmpfilename,
+            [
+                'tested' => 'Tested',
+				'icons' => 'Icons',
+				'banners' => 'Banners',
+				'requires_php' => 'RequiresPHP',
+            ]
+        );
+
+		$icons = $file_headers[ 'icons' ] ? array_map( 'trim', explode(',', $file_headers[ 'icons' ] ) ) : false;
+		$banners = $file_headers[ 'banners' ] ? array_map( 'trim', explode(',', $file_headers[ 'banners' ] ) ) : array();
+
+		$username = $this->username;
+		$repository = $this->repository;
+
+		// decompose the icons, if provided
+		if (is_array($icons)) {
+			$icons = array_reduce( $icons, function ($acc , $item) use ($username,$repository) { 
+				$ex_item = explode('|', $item, 2);
+				$key = trim($ex_item[0]);
+				$url = isset($ex_item[1]) ? trim($ex_item[1]) : '';
+				// If absolute URL, use as-is; otherwise, build from repo path
+				if ( preg_match('#^https?://#i', $url) ) {
+					$acc[$key] = $url;
+				} else {
+					$acc[$key] = sprintf("https://github.com/%s/%s%s" , $username, $repository, $url );
+				}
+				return $acc;
+			} , []);
+		}
+
+		// decompose the banners, if provided
+		if (is_array($banners)) {
+			$banners = array_reduce( $banners, function ($acc , $item) use ($username,$repository) { 
+				$ex_item = explode('|', $item, 2);
+				$key = trim($ex_item[0]);
+				$url = isset($ex_item[1]) ? trim($ex_item[1]) : '';
+				if ( preg_match('#^https?://#i', $url) ) {
+					$acc[$key] = $url;
+				} else {
+					$acc[$key] = sprintf("https://github.com/%s/%s%s" , $username, $repository, $url );
+				}
+				return $acc;
+			} , []);
+		}
+
+		// try to find the update_description delimiter
+		$update_description = explode( '|||' , $string );
+
+		$updates = ( sizeof($update_description) == 2 ) ? $update_description[1] : '';
+
+		$data = [
+			'tested' => $file_headers[ 'tested' ],
+			'requires_php' => $file_headers[ 'requires_php' ],
+			'icons' => $icons,
+			'banners' => $banners,
+			'updates' => $updates,
+		];
+
+        return $data;
+
+
+
+
+	}
+
+	/**
+	 * [plugin_popup description]
+	 * @param  [type] $result [description]
+	 * @param  [type] $action [description]
+	 * @param  [type] $args   [description]
+	 * @return [type]         [description]
+	 */
+	public function plugin_popup( $result, $action, $args ) {
+
+		// If there is a slug
+		if( ! empty( $args->slug ) ) {
+
+			// And it's our slug
+			if( $args->slug == current( explode( '/' , $this->basename ) ) ) {
+
+				// Get our repo info
+				$this->get_repository_info();
+				// Set it to an array
+				$gr = is_array($this->github_response) ? $this->github_response : array();
+				$tag = isset($gr['tag_name']) ? (string) $gr['tag_name'] : '';
+				$version = $tag !== '' ? ltrim($tag, 'vV') : '';
+				$plugin = array(
+					'name'				=> $this->plugin["Name"],
+					'slug'				=> $this->basename,
+					'version'			=> $version,
+					'author'			=> $this->plugin["AuthorName"],
+					'author_profile'	=> $this->plugin["AuthorURI"],
+					'last_updated'		=> $gr['published_at'] ?? '',
+					'homepage'			=> $this->plugin["PluginURI"],
+					'short_description' => $this->plugin["Description"],
+					'sections'			=> array(
+						'Description'	=> $this->plugin["Description"],
+						'Updates'		=> $gr['updates'] ?? '',
+					),
+					'banners'			=> $gr['banners'] ?? array(),
+					'download_link'		=> $gr['zipball_url'] ?? ''
+				);
+
+				// merge with other settings that can be set
+				$plugin = wp_parse_args( $plugin, $this->plugin_settings );
+
+				// Return the data
+				return (object) $plugin;
+			}
+		}
+		// Otherwise return default
+		return $result;
+	}
+
+	/**
+	 * [after_install description]
+	 * @param  [type] $response   [description]
+	 * @param  [type] $hook_extra [description]
+	 * @param  [type] $result     [description]
+	 * @return [type]             [description]
+	 */
+	public function after_install( $response, $hook_extra, $result ) {
+
+		// Get global FS object
+		global $wp_filesystem;
+
+		// Our plugin directory
+		$install_directory = plugin_dir_path( $this->file );
+
+		// Move files to the plugin dir
+		$wp_filesystem->move( $result['destination'], $install_directory );
+
+		// Set the destination for the rest of the stack
+		$result['destination'] = $install_directory;
+
+		// If it was active
+		if ( $this->active ) {
+
+			// Reactivate
+			activate_plugin( $this->basename );
+		}
+
+		return $result;
+	}
+}
