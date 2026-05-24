@@ -46,11 +46,29 @@ From this point on, `get_field()` (or `the_field()`) for that field will return 
 
 > **Note:** The enrichment setting is hidden when the Post Object field's **Return Format** is set to *Post ID*, since enrichment only applies to object returns.
 
+## Example Use Case
+
+Say you have a Books post type and a Post Object field called `featured_books` that lets editors pick a handful of books to highlight. Each book post has two custom fields: `book_author` (text) and `book_genre` (text).
+
+In the ACF field group editor, find the `featured_books` field and use the **Attach additional fields** setting to add `book_author` and `book_genre` — just click **+ Add field** for each one.
+
+Now in your template, each book post object already has `book_author` and `book_genre` ready to go:
+
+```php
+$books = get_field( 'featured_books' );
+foreach ( $books as $book ) {
+    echo $book->book_author;
+    echo $book->book_genre;
+}
+```
+
+No nested `get_field()` calls needed.
+
 ## Notes
 
 - Values are resolved using `get_field()`, so they respect ACF's formatting — images return arrays, relationships return arrays of `WP_Post` objects, etc.
 - The picker auto-detects which post types the field targets and scopes the field list accordingly. It falls back to all available ACF fields when no post type filter is set.
-- Field names are stored as a comma-separated string internally; you can also type them directly if preferred.
+- Field names are stored as a comma-separated string internally.
 
 ## License
 
