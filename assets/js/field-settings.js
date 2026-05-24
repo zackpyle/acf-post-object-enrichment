@@ -9,6 +9,8 @@
 
 	$( function () {
 		initAll( document );
+
+
 	} );
 
 	// Handle fields added via "Add Field" button or duplication
@@ -79,7 +81,7 @@
 			toggleDropdown( $ui );
 		} );
 
-		$ui.append( $tags ).append( $addBtn ).append( $dropdown );
+		$ui.append( $addBtn ).append( $tags ).append( $dropdown );
 		return $ui;
 	}
 
@@ -218,7 +220,7 @@
 		$ui.find( '.acf-poe-tag' ).each( function () {
 			names.push( $( this ).data( 'name' ) );
 		} );
-		$ui.data( '$input' ).val( names.join( ',' ) );
+		$ui.data( '$input' ).val( names.join( ',' ) ).trigger( 'change' );
 	}
 
 	function esc( str ) {

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: 	  ACF Post Object Enrichment
  * Description: 	  Adds a UI to ACF Post Object and Relationship fields to automatically attach additional ACF field values to each returned WP_Post object.
- * Version:     	  1.0.0
+ * Version:     	  1.0.1
  * Author:      	  SnippetNest
  * Author URI:  	  https://snippetnest.com
  * Plugin URI:  	  https://snippetnest.com/snippet/extend-acf-post-object-relationship-fields-custom-data/
@@ -15,7 +15,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'ACF_POE_VERSION',    '1.0.0' );
+define( 'ACF_POE_VERSION',    '1.0.1' );
 define( 'ACF_POE_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ACF_POE_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
